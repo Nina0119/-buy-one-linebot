@@ -58,8 +58,11 @@ def single_click_icon(icon_path, desc):
         return False
 
 # 替換你服務金鑰的路徑
-VISION_KEY_PATH = r'C:\Users\chimou\Desktop\linebot 0608\vision_key.json'
+import os
+from google.oauth2 import service_account
 
+KEY_PATH = os.getenv("GOOGLE_KEY_PATH", "vision_key.json")
+credentials = service_account.Credentials.from_service_account_file(KEY_PATH)
 
 # 📁 設定基礎資料夾與截圖存檔路徑
 BASE_DIR = r'C:\Users\chimou\Desktop\linebot 0608\screenshots'

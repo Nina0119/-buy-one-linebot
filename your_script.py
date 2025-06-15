@@ -1,4 +1,3 @@
-import pytesseract
 import pygetwindow as gw
 import pyautogui
 import sqlite3
@@ -6,14 +5,14 @@ import time
 import sys
 import os
 import csv
-import re
 from collections import Counter
-from PIL import Image, ImageEnhance, ImageFilter
+from PIL import Image
+from google.cloud import vision
+from google.oauth2 import service_account
+import google.generativeai as genai
 
-# Tesseract 路徑設定
-pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+# ========== 設定 ==========
 
-# 圖片資源與儲存路徑
 BASE_DIR = r'C:\Users\chimou\Desktop\linebot 0608'
 GROUP_ICON = os.path.join(BASE_DIR, 'group_test.PNG')
 NOTEBOOK_ICON = os.path.join(BASE_DIR, 'notebook_icon.png')
@@ -21,6 +20,8 @@ BUBBLE_ICON = os.path.join(BASE_DIR, '0f777bdf-d7c1-4300-b07b-d1f72e7b4fb9.png')
 SCREENSHOT_PATH = os.path.join(BASE_DIR, 'screenshot_debug.png')
 CSV_PATH = os.path.join(BASE_DIR, 'output.csv')
 DB_NAME = 'line_notes.db'
+
+# ========== 功能函數 ==========
 
 def switch_to_line():
     windows = gw.getWindowsWithTitle('LINE')
@@ -56,75 +57,73 @@ def single_click_icon(icon_path, desc):
         print(f"❌ 找不到 {desc} 圖示：{icon_path}")
         return False
 
+# 替換你服務金鑰的路徑
+VISION_KEY_PATH = r'C:\Users\chimou\Desktop\linebot 0608\vision_key.json'
+
+
+# 📁 設定基礎資料夾與截圖存檔路徑
+BASE_DIR = r'C:\Users\chimou\Desktop\linebot 0608\screenshots'
+SCREENSHOT_PATH = os.path.join(BASE_DIR, 'screenshot_debug.png')
+
+# 🔑 替換成你的金鑰檔案路徑
+VISION_KEY_PATH = r'C:\Users\chimou\Desktop\linebot 0608\vision_key.json'
+
 def extract_plus_one_messages(lines):
+    """
+    自訂：提取留言中包含「+1」的使用者名稱
+    你可以根據實際格式微調此邏輯
+    """
     plus_ones = []
-    name_candidate = None
-
-    for line in lines:
-        line = line.strip()
-        if not line:
-            continue
-
-        # 嘗試從一行中同時偵測人名與 +1
-        match = re.search(r'([A-Za-z一-龥]{2,})\s*(\+1|＋1)', line)
-        if match:
-            plus_ones.append(f"{match.group(1)} +1")
-            name_candidate = None
-            continue
-
-        # 若符合人名格式，暫存
-        if re.fullmatch(r'[A-Za-z一-龥]{2,}', line):
-            name_candidate = line
-            continue
-
-        # 若前一行是人名，且本行是 +1
-        if name_candidate and re.fullmatch(r'(\+1|＋1)', line):
-            plus_ones.append(f"{name_candidate} +1")
-            name_candidate = None
-            continue
-
-        # 其他情況清除暫存
-        name_candidate = None
-
+    for i, line in enumerate(lines):
+        if "+1" in line:
+            # 嘗試抓上面一行當作人名
+            if i > 0:
+                plus_ones.append(lines[i - 1])
+            else:
+                plus_ones.append("未知")
     return plus_ones
 
 def capture_and_ocr():
-    print("📸 擁有畫面中（全螢幕）...")
-    original = pyautogui.screenshot()
+    print("📸 擷取畫面中（全螢幕）...")
+    image = pyautogui.screenshot()
+
+    # 儲存圖片
     os.makedirs(BASE_DIR, exist_ok=True)
-    original.save(SCREENSHOT_PATH)
+    image.save(SCREENSHOT_PATH)
     print(f"🖼️ 圖片已儲存至：{SCREENSHOT_PATH}")
 
-    custom_config = r'--oem 3 --psm 11 -c preserve_interword_spaces=1 tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz+１1234567890一二三四五六七八九十王林陳李張黃吳劉楊周徐鄭謝Nina'
+    # 建立 Vision API 客戶端
+    credentials = service_account.Credentials.from_service_account_file(VISION_KEY_PATH)
+    client = vision.ImageAnnotatorClient(credentials=credentials)
 
-    all_lines = []
-    all_plus_ones = []
+    # 讀取圖片並轉成 base64
+    with open(SCREENSHOT_PATH, 'rb') as image_file:
+        content = image_file.read()
+        image = vision.Image(content=content)
 
-    for i in range(4):
-        img = original.copy()
-        if i == 0:
-            img = img.resize((int(img.width * 2.5), int(img.height * 2.5)), Image.LANCZOS)
-        elif i == 1:
-            img = img.convert('L').filter(ImageFilter.SHARPEN)
-        elif i == 2:
-            img = ImageEnhance.Contrast(img).enhance(2.0).convert('L')
-        elif i == 3:
-            img = img.convert('L').point(lambda x: 0 if x < 130 else 255, '1')
+    try:
+        response = client.text_detection(image=image)
+        texts = response.text_annotations
 
-        text = pytesseract.image_to_string(img, lang='chi_tra+eng', config=custom_config)
-        print(f"\n🌀 OCR 模式 {i+1} 結果：\n{text}")
-        lines = [line.strip() for line in text.splitlines() if line.strip()]
-        all_lines.extend(lines)
+        if not texts:
+            print("⚠️ 沒有偵測到任何文字")
+            return [], []
+
+        full_text = texts[0].description
+        print("📋 OCR 結果如下：\n", full_text)
+
+        lines = [line.strip() for line in full_text.splitlines() if line.strip()]
+        print("\n🔍 OCR 切行結果：")
+        for line in lines:
+            print(" -", line)
+
         plus_ones = extract_plus_one_messages(lines)
-        all_plus_ones.extend(plus_ones)
+        return plus_ones, lines
 
-    unique_plus_ones = list(set(all_plus_ones))
+    except Exception as e:
+        print(f"❌ OCR 發生錯誤：{e}")
+        return [], []
 
-    print("\n🔍 綜合 OCR 偵測結果：")
-    for msg in unique_plus_ones:
-        print(" -", msg)
-
-    return unique_plus_ones, all_lines
 
 def save_to_db_and_csv(messages):
     if not messages:
@@ -151,7 +150,7 @@ def save_to_db_and_csv(messages):
 
     print(f"🧰 加總票數：{len(messages)}")
 
-    counter = Counter([msg.split()[0] for msg in messages if len(msg.split()) > 1])
+    counter = Counter([msg.split(":")[0].strip() for msg in messages if ":" in msg])
     print("\n📊 個別票數統計：")
     for name, count in counter.items():
         print(f"  - {name}: {count} 票")
@@ -164,16 +163,13 @@ def main():
     if not double_click_icon(NOTEBOOK_ICON, "記事本圖示"): sys.exit()
     if not single_click_icon(BUBBLE_ICON, "留言圖示"): sys.exit()
 
-    msgs, _ = capture_and_ocr()
+    # 擷取畫面與 OCR
+    plus_ones, all_lines = capture_and_ocr()
+    print("\n📊 加一名單：", plus_ones)
 
-    if msgs:
-        print("\n✅ 偵測到 +1 留言如下：")
-        for m in msgs:
-            print("  -", m)
-    else:
-        print("⚠️ 沒有偵測到任何 +1 留言")
+    # 儲存到 DB 與 CSV
+    save_to_db_and_csv(plus_ones)
 
-    save_to_db_and_csv(msgs)
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
+

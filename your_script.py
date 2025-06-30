@@ -10,6 +10,7 @@ from PIL import Image
 from google.cloud import vision
 from google.oauth2 import service_account
 import google.generativeai as genai
+from dotenv import load_dotenv
 
 # ========== 設定 ==========
 
@@ -60,9 +61,14 @@ def single_click_icon(icon_path, desc):
 # 替換你服務金鑰的路徑
 import os
 from google.oauth2 import service_account
+load_dotenv()  # 讀取 .env 檔案
 
-KEY_PATH = os.getenv("GOOGLE_KEY_PATH", "vision_key.json")
-credentials = service_account.Credentials.from_service_account_file(KEY_PATH)
+VISION_KEY_PATH = os.getenv("GOOGLE_KEY_PATH")
+
+if not VISION_KEY_PATH or not os.path.exists(VISION_KEY_PATH):
+    raise FileNotFoundError("❌ 無法找到 vision_key.json，請確認路徑是否正確")
+
+credentials = service_account.Credentials.from_service_account_file(VISION_KEY_PATH)
 
 # 📁 設定基礎資料夾與截圖存檔路徑
 BASE_DIR = r'C:\Users\chimou\Desktop\linebot 0608\screenshots'
